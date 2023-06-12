@@ -1,0 +1,4 @@
+[class*="imageFrame"]{
+    background-size: contain !important;
+    background-repeat: no-repeat;
+}

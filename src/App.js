@@ -1,13 +1,15 @@
 import "./styles.css";
 import React, {useEffect, useRef, useState} from "react";
 import {GoogleMap, Marker, StandaloneSearchBox, useJsApiLoader} from '@react-google-maps/api';
-import ReactCrop from 'react-image-crop'
+import ReactCrop from 'react-image-crop';
 import html2canvas from "html2canvas";
 import useKeyPress from './useKeyPress';
 
-import 'react-image-crop/dist/ReactCrop.css'
+import 'react-image-crop/dist/ReactCrop.css';
+import './custom.css';
 import BBoxAnnotator from "react-bbox-annotator";
 import annotation from "./annotation";
+
 var CONFIG = require('./config.json');
 
 const TO_RADIANS = Math.PI / 180;
@@ -104,6 +106,14 @@ export default function App() {
         lng: 144.9631
     });
 
+    // croshairs for mouse - for now disabled due to incompatibility of the librabry used
+    const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+    const handleMouseMove = (event) => {
+        setMousePosition({ x: event.clientX, y: event.clientY });
+        setMousePosition({ x: event.clientX, y: event.clientY });
+    };
+
     const {isLoaded} = useJsApiLoader({
         id: 'google-map-script',
         googleMapsApiKey: CONFIG.googleMapsApiKey,
@@ -144,36 +154,8 @@ export default function App() {
     const [fileNum, setFileNum] = useState(1);
     const [downloaded, setDownloaded] = useState(false);
     const searchRef = useRef(null);
+    const [imageDims, setImageDims] = useState({});
 
-
-    // const startCapture = async (displayMediaOptions) => {
-    //     let captureStream;
-    //     try {
-    //         captureStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
-    //     } catch (err) {
-    //         console.error(`Error: ${err}`);
-    //     }
-    //     return captureStream;
-    // }
-
-    // const takeScreenshot = async () => {
-    //     const stream = await startCapture({ video: true, preferCurrentTab: true });
-    //     const video = document.createElement('video');
-    //     video.srcObject = stream;
-    //     const drawProm = new Promise((resolve, _) => video.onloadedmetadata = () => {
-    //         video.play();
-    //         const canvas = document.createElement('canvas');
-    //         canvas.width = video.videoWidth;
-    //         canvas.height = video.videoHeight;
-    //         const ctx = canvas.getContext('2d');
-    //         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    //         setScreenshot(canvas.toDataURL("image/jpeg", 1.0));
-    //         stream.getTracks().forEach(track => track.stop());
-    //         resolve();
-    //     });
-    //     await drawProm;
-    // };
-    //
     useDebounceEffect(
         async () => {
             if (
@@ -206,12 +188,21 @@ export default function App() {
             // await takeScreenshot();
             const imgCanvas = await html2canvas(
                 mapRef.current,
-                // This is a very important line as it allows to capture an image of Google Maps!
                 {allowTaint: true, useCORS: true},
             );
             const dataURI = imgCanvas.toDataURL("image/jpeg", 1.0)
             setScreenshot(dataURI)
             setStage(2);
+        }
+    }
+
+    const calculateWidth = () => {
+        const imgRatio = completedCrop.width / completedCrop.height;
+        const screenRatio =   window.innerWidth / window.innerHeight;
+        if(imgRatio < screenRatio | completedCrop.width < completedCrop.height) {
+            return  window.innerHeight/completedCrop.height*completedCrop.width;
+        } else {
+            return undefined;
         }
     }
 
@@ -231,27 +222,13 @@ export default function App() {
         imWidth = imageElement.width;
         imHeight = imageElement.height;
 
-        // const inputAnn = { items: entries, filename: 'testfile.jpg', width: imWidth, height: imHeight};
-        // const output = annotation(inputAnn);
-        // // console.log(output);
-        // const element = document.createElement("a");
-        // const file = new Blob([output], {type: 'text/plain'});
-        // element.href = URL.createObjectURL(file);
-        // element.download = "testfile.xml";
-        // // document.body.appendChild(element); // Required for this to work in FireFox
-        // element.click();
-        //
-        // element.href = image;
-        // element.download = "testfile.jpg";
-        // document.body.appendChild(element); // Required for this to work in FireFox
-        // element.click();
         imageElement.onload = function () {
             imWidth = imageElement.width;
             imHeight = imageElement.height;
+            setImageDims({width: imWidth, height: imHeight});
 
-            const inputAnn = { items: entries, filename: `annotate_${fileNum}.jpg`, width: imWidth, height: imHeight};
+            const inputAnn = {items: entries, filename: `annotate_${fileNum}.jpg`, width: imWidth, height: imHeight};
             const output = annotation(inputAnn);
-            // console.log(output);
             const element = document.createElement("a");
             const file = new Blob([output], {type: 'text/plain'});
             element.href = URL.createObjectURL(file);
@@ -264,7 +241,7 @@ export default function App() {
             // document.body.appendChild(element); // Required fsor this to work in FireFox
             element.click();
             setDownloaded(true);
-            setFileNum(fileNum+1);
+            setFileNum(fileNum + 1);
         };
     }
 
@@ -274,7 +251,6 @@ export default function App() {
     useKeyPress(['d'], () => onDownload());
 
 
-
     return isLoaded ? (
         <div className="App" ref={mapRef}>
             {<div style={{display: (stage === 1) ? "block" : "none"}}>
@@ -282,7 +258,6 @@ export default function App() {
                     mapContainerStyle={containerStyle}
                     center={center}
                     zoom={10}
-                    // onLoad={onLoad}
                     onUnmount={onUnmount}>
                     <StandaloneSearchBox
                         onLoad={handleLoad}
@@ -292,7 +267,9 @@ export default function App() {
                             type="text"
                             ref={searchRef}
                             placeholder="Location Address"
-                            onKeyDown={(e) => {e.stopPropagation()}}
+                            onKeyDown={(e) => {
+                                e.stopPropagation()
+                            }}
                             style={{
                                 boxSizing: `border-box`,
                                 border: `1px solid transparent`,
@@ -334,34 +311,25 @@ export default function App() {
                     </ReactCrop>
                 )}
             </div>
-            {stage === 3 && ( <>
-                <BBoxAnnotator
-                    url={image}
-                    inputMethod="select"
-                    labels={labels}
-                    onChange={(e) => {
-                        if (e.length > 0) {
-                            setEntries(e);
-                            // console.log(e)
-                            //     var bbox = {};
-                            //     bbox.width = e[0].width / 805;
-                            //     bbox.top = e[0].top / 1043;
-                            //     bbox.left = e[0].left / 805;
-                            //     bbox.height = e[0].height / 1043;
-                            //     console.log(bbox.width, bbox.top, bbox.left, bbox.height);
-                            // x1 = bbox.left;
-                            // y1 = bbox.top;
-                            // x2 = bbox.left + bbox.width;
-                            // y2 = bbox.top + bbox.height;
-                            //console.log(x1 + "," + y1 + "," + x2 + "," + y2);
-                        } else {
-                            setEntries([]);
-                        }
-                    }}
-                />
-
-                    {/*<pre>{JSON.stringify(entries)}</pre>*/}
-                </>
+            {stage === 3 && (<div
+                    style={{
+                        width: calculateWidth(),
+                        margin: 'auto',
+                    }}>
+                    {/*<>{console.log(completedCrop.width, completedCrop.height)}</>*/}
+                    <BBoxAnnotator
+                        url={image}
+                        inputMethod="select"
+                        labels={labels}
+                        onChange={(e) => {
+                            if (e.length > 0) {
+                                setEntries(e);
+                            } else {
+                                setEntries([]);
+                            }
+                        }}
+                    />
+                </div>
             )}
         </div>
     ) : <></>

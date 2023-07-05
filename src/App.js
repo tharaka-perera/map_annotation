@@ -1,6 +1,6 @@
 import "./styles.css";
-import React, {useEffect, useRef, useState} from "react";
-import {GoogleMap, Marker, StandaloneSearchBox, useJsApiLoader} from '@react-google-maps/api';
+import React, {useCallback, useEffect, useRef, useState} from "react";
+import {GoogleMap, Marker, StandaloneSearchBox, StreetViewPanorama, useJsApiLoader} from '@react-google-maps/api';
 import ReactCrop from 'react-image-crop';
 import html2canvas from "html2canvas";
 import useKeyPress from './useKeyPress';
@@ -97,36 +97,49 @@ const containerStyle = {
     height: '100vh'
 };
 
+const libraries = ['places']
+
 
 export default function App() {
-    const labels = ["label1", "label2", "label3"];
+    const labels = ["transformer"];
 
     const [center, setCenter] = useState({
         lat: -37.8136,
         lng: 144.9631
     });
 
-    // croshairs for mouse - for now disabled due to incompatibility of the librabry used
-    const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-
-    const handleMouseMove = (event) => {
-        setMousePosition({ x: event.clientX, y: event.clientY });
-        setMousePosition({ x: event.clientX, y: event.clientY });
-    };
-
     const {isLoaded} = useJsApiLoader({
         id: 'google-map-script',
         googleMapsApiKey: CONFIG.googleMapsApiKey,
-        libraries: ["places"],
+        libraries,
     })
 
-    const [map, setMap] = React.useState(null)
+    const [map, setMap] = useState(null)
+    const [stView, setStView] = useState(null);
     const [search, setSearch] = useState(null);
+    const [stViewCoords, setStViewCoords] = useState(null);
 
-    const onUnmount = React.useCallback(function callback(map) {
+    const onMapLoad = useCallback((map) => {
+        setMap(map)
+    }, [])
+
+    const onUnmount = useCallback(() => {
         setMap(null)
     }, []);
 
+    const onStVwLoad = (stVw) => {
+        setStView(stVw);
+    };
+
+    const onStViewChange = () => {
+        setStViewCoords({
+            lat: stView.getPosition().lat(),
+            lng: stView.getPosition().lng(),
+            heading: stView.getPov().heading,
+            pitch: stView.getPov().pitch,
+            zoom: stView.getPov().zoom
+        })
+    }
 
     const handleLoad = (ref) => {
         setSearch(ref);
@@ -142,19 +155,14 @@ export default function App() {
     const [screenshot, setScreenshot] = useState(null);
     const [crop, setCrop] = useState(null);
     const [completedCrop, setCompletedCrop] = useState(null);
-    const blobUrlRef = useRef('');
     const imgRef = useRef(null);
-    const [aspect, setAspect] = useState(undefined);
-    const previewCanvasRef = useRef(null)
     const croppedCanvas = document.createElement('canvas',);
-    const [readyToCrop, setReadyToCrop] = useState(false);
     const [stage, setStage] = useState(1);
     const mapRef = useRef(null);
     const [entries, setEntries] = useState([]);
     const [fileNum, setFileNum] = useState(1);
     const [downloaded, setDownloaded] = useState(false);
     const searchRef = useRef(null);
-    const [imageDims, setImageDims] = useState({});
 
     useDebounceEffect(
         async () => {
@@ -198,9 +206,9 @@ export default function App() {
 
     const calculateWidth = () => {
         const imgRatio = completedCrop.width / completedCrop.height;
-        const screenRatio =   window.innerWidth / window.innerHeight;
-        if(imgRatio < screenRatio | completedCrop.width < completedCrop.height) {
-            return  window.innerHeight/completedCrop.height*completedCrop.width;
+        const screenRatio = window.innerWidth / window.innerHeight;
+        if (imgRatio < screenRatio || completedCrop.width < completedCrop.height) {
+            return window.innerHeight / completedCrop.height * completedCrop.width;
         } else {
             return undefined;
         }
@@ -214,7 +222,7 @@ export default function App() {
     }
 
     const onDownload = () => {
-        if (stage !== 3 | downloaded | entries.length === 0) return;
+        if (stage !== 3 | downloaded || entries.length === 0) return;
         const imageElement = new Image();
         imageElement.src = image;
         let imWidth;
@@ -225,19 +233,23 @@ export default function App() {
         imageElement.onload = function () {
             imWidth = imageElement.width;
             imHeight = imageElement.height;
-            setImageDims({width: imWidth, height: imHeight});
 
-            const inputAnn = {items: entries, filename: `annotate_${fileNum}.jpg`, width: imWidth, height: imHeight};
+            const inputAnn = {
+                items: entries,
+                filename: `${Object.values(stViewCoords).join('_')}.jpg`,
+                width: imWidth,
+                height: imHeight
+            };
             const output = annotation(inputAnn);
             const element = document.createElement("a");
             const file = new Blob([output], {type: 'text/plain'});
             element.href = URL.createObjectURL(file);
-            element.download = `annotate_${fileNum}.xml`;
+            element.download = `${Object.values(stViewCoords).join('_')}.xml`;
             // document.body.appendChild(element); // Required for this to work in FireFox
             element.click();
 
             element.href = image;
-            element.download = `annotate_${fileNum}.jpg`;
+            element.download = `${Object.values(stViewCoords).join('_')}.jpg`;
             // document.body.appendChild(element); // Required fsor this to work in FireFox
             element.click();
             setDownloaded(true);
@@ -245,10 +257,58 @@ export default function App() {
         };
     }
 
+    // pole coordinate inpuut related logic
+    const [poleCoordinatesString, setPoleCoordinatesString] = useState('');
+    const [coordListVisibility, setCoordListVisibility] = useState(false);
+    const [poleCoordArray, setPoleCoordArray] = useState([]);
+    const [stViewCenter, setStViewCenter] = useState({
+        lat: -34.940430170000000,
+        lng: 138.81630712600000
+    });
+    const [coordCounter, setCoordCounter] = useState(0);
+    const [stViewVisibility, setStViewVisibility] = useState(false);
+
+    const onToggleCoordList = () => {
+        setCoordListVisibility(!coordListVisibility);
+    }
+
+    useEffect(() => {
+        const coordPairs = poleCoordinatesString.split("\n");
+        const poleCoords = [];
+        coordPairs.forEach((coordStr) => {
+            const [lng, lat] = coordStr.split(/[ \t]+/);
+            if (/\d/.test(lat) && /\d/.test(lng)) {
+                poleCoords.push({lat: parseFloat(lat), lng: parseFloat(lng)});
+            }
+        });
+        setPoleCoordArray(poleCoords);
+    }, [poleCoordinatesString]);
+
+    const onJumpToCoordInc = () => {
+        if ((poleCoordArray.length - 1) > coordCounter) {
+            setStViewVisibility(false);
+            setCoordCounter(prevCount => prevCount + 1);
+            setStViewCenter(poleCoordArray[coordCounter]);
+            setStViewVisibility(true);
+        }
+    }
+
+    const onJumpToCoordDec = () => {
+        if (0 < coordCounter) {
+            setStViewVisibility(false);
+            setCoordCounter(prevCount => prevCount - 1);
+            setStViewCenter(poleCoordArray[coordCounter]);
+            setStViewVisibility(true);
+        }
+    }
+
     // key press functionality
-    useKeyPress(['s'], () => onSave());
+    useKeyPress(['c'], () => onSave());
     useKeyPress(['r'], () => onReset());
     useKeyPress(['d'], () => onDownload());
+    useKeyPress(['l'], () => onToggleCoordList());
+    useKeyPress(['n'], () => onJumpToCoordInc());
+    useKeyPress(['p'], () => onJumpToCoordDec());
 
 
     return isLoaded ? (
@@ -258,7 +318,16 @@ export default function App() {
                     mapContainerStyle={containerStyle}
                     center={center}
                     zoom={10}
-                    onUnmount={onUnmount}>
+                    onUnmount={onUnmount}
+                    onLoad={onMapLoad}
+                    // onDrag={onBoundsChanged}
+                >
+                    <StreetViewPanorama
+                        position={stViewCenter}
+                        onLoad={onStVwLoad}
+                        onPovChanged={onStViewChange}
+                        visible={stViewVisibility}
+                    />
                     <StandaloneSearchBox
                         onLoad={handleLoad}
                         onPlacesChanged={onPlacesChanged}
@@ -289,6 +358,22 @@ export default function App() {
                     </StandaloneSearchBox>
                     <Marker position={center}/>
                 </GoogleMap>
+                <div style={{
+                    position: "absolute",
+                    width: 300,
+                    top: 100,
+                    bottom: 100,
+                    left: 50,
+                    display: coordListVisibility ? 'block' : 'none',
+                    zIndex: 100000
+                }}>
+                    <label>
+                        Enter the list of coordinates:
+                        <textarea style={{width: '100%', height: '98%'}}
+                                  value={poleCoordinatesString}
+                                  onChange={e => setPoleCoordinatesString(e.target.value)}/>
+                    </label>
+                </div>
             </div>
             }
             <div>
@@ -316,7 +401,6 @@ export default function App() {
                         width: calculateWidth(),
                         margin: 'auto',
                     }}>
-                    {/*<>{console.log(completedCrop.width, completedCrop.height)}</>*/}
                     <BBoxAnnotator
                         url={image}
                         inputMethod="select"
